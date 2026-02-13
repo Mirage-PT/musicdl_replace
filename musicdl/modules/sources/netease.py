@@ -118,6 +118,33 @@ class NeteaseMusicClient(BaseMusicClient):
             if song_info.with_valid_download_url: break
         # return
         return song_info
+    '''_parsewithyutangxiaowuapi'''
+    def _parsewithyutangxiaowuapi(self, search_result: dict, request_overrides: dict = None):
+        # init
+        request_overrides, song_id = request_overrides or {}, search_result['id']
+        # safe fetch filesize func
+        safe_fetch_filesize_func = lambda meta: (lambda s: (lambda: float(s))() if s.replace('.', '', 1).isdigit() else 0)(str(meta.get('size', '0.00MB')).removesuffix('MB').strip()) if isinstance(meta, dict) else 0
+        # parse
+        for quality in MUSIC_QUALITIES:
+            try: (resp := self.get(f'https://yutangxiaowu.cn:4000/Song_V1?url={song_id}&level={quality}&type=json', timeout=10, **request_overrides)).raise_for_status()
+            except Exception: break
+            download_result = resp2json(resp=resp)
+            if 'url' not in download_result or (safe_fetch_filesize_func(download_result) < 1): continue
+            download_url: str = safeextractfromdict(download_result, ['url'], '')
+            if not download_url or not download_url.startswith('http'): continue
+            lyric, download_url_status = cleanlrc(safeextractfromdict(download_result, ['lyric'], "")) or 'NULL', self.audio_link_tester.test(download_url, request_overrides)
+            song_info = SongInfo(
+                raw_data={'search': search_result, 'download': download_result, 'lyric': {}, 'quality': quality}, source=self.source, song_name=legalizestring(download_result.get('name', None)), 
+                singers=legalizestring(download_result.get('ar_name')), album=legalizestring(safeextractfromdict(download_result, ['al_name'], None)), ext=download_url.split('?')[0].split('.')[-1],
+                file_size=str(safeextractfromdict(download_result, ['size'], "")).removesuffix('MB').strip() + ' MB', identifier=search_result['id'], duration_s=extractdurationsecondsfromlrc(lyric),
+                duration=seconds2hms(extractdurationsecondsfromlrc(lyric)), lyric=lyric, cover_url=download_result.get('pic'), download_url=download_url, download_url_status=download_url_status,
+            )
+            if song_info.album == 'NULL': song_info.album = legalizestring(safeextractfromdict(search_result, ['al', 'name'], None))
+            song_info.download_url_status['probe_status'] = self.audio_link_tester.probe(song_info.download_url, request_overrides)
+            song_info.file_size = song_info.download_url_status['probe_status']['file_size']
+            if song_info.with_valid_download_url: break
+        # return
+        return song_info
     '''_parsewithxianyuwapi'''
     def _parsewithxianyuwapi(self, search_result: dict, request_overrides: dict = None):
         # init
@@ -218,7 +245,7 @@ class NeteaseMusicClient(BaseMusicClient):
     def _parsewiththirdpartapis(self, search_result: dict, request_overrides: dict = None):
         cookies = self.default_cookies or request_overrides.get('cookies')
         if cookies and (cookies != DEFAULT_COOKIES): return SongInfo(source=self.source, raw_data={'quality': MUSIC_QUALITIES[-1]})
-        for imp_func in [self._parsewithcggapi, self._parsewithcyruiapi, self._parsewithtmetuapi, self._parsewithcunyuapi, self._parsewithbugpkapi, self._parsewithxianyuwapi, self._parsewithxiaoqinapi]:
+        for imp_func in [self._parsewithcggapi, self._parsewithcyruiapi, self._parsewithtmetuapi, self._parsewithcunyuapi, self._parsewithyutangxiaowuapi, self._parsewithbugpkapi, self._parsewithxianyuwapi, self._parsewithxiaoqinapi]:
             try:
                 song_info_flac = imp_func(search_result, request_overrides)
                 if song_info_flac.with_valid_download_url: break
@@ -333,7 +360,7 @@ class NeteaseMusicClient(BaseMusicClient):
             for idx, track_info in enumerate(tracks):
                 if idx > 0: main_process_context.advance(main_progress_id, 1)
                 main_process_context.update(main_progress_id, description=f"{len(tracks)} songs found in playlist {playlist_id} >>> completed ({idx}/{len(tracks)})")
-                for third_part_api in [self._parsewithcggapi, self._parsewithcyruiapi, self._parsewithtmetuapi, self._parsewithcunyuapi, self._parsewithbugpkapi, self._parsewithxianyuwapi, self._parsewithxiaoqinapi]:
+                for third_part_api in [self._parsewithcggapi, self._parsewithcyruiapi, self._parsewithtmetuapi, self._parsewithcunyuapi, self._parsewithyutangxiaowuapi, self._parsewithbugpkapi, self._parsewithxianyuwapi, self._parsewithxiaoqinapi]:
                     try:
                         song_info = third_part_api(track_info, request_overrides=request_overrides)
                         if song_info.with_valid_download_url: song_infos.append(song_info); break
