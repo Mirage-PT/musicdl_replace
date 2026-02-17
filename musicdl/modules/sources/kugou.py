@@ -234,7 +234,7 @@ class KugouMusicClient(BaseMusicClient):
                 main_process_context.update(main_progress_id, description=f"{len(tracks)} songs found in playlist {playlist_id} >>> completed ({idx}/{len(tracks)})")
                 song_info_flac = self._parsewiththirdpartapis(track_info, request_overrides=request_overrides)
                 try: song_info = self._parsewithofficialapiv1(track_info, request_overrides=request_overrides, song_info_flac=song_info_flac, lossless_quality_is_sufficient=True)
-                except Exception: song_info = SongInfo(source=self.source)
+                except Exception: song_info = song_info_flac
                 if song_info.with_valid_download_url: song_infos.append(song_info)
             main_process_context.advance(main_progress_id, 1)
             main_process_context.update(main_progress_id, description=f"{len(tracks)} songs found in playlist {playlist_id} >>> completed ({idx+1}/{len(tracks)})")
