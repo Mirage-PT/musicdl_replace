@@ -152,8 +152,9 @@ class MiguMusicClient(BaseMusicClient):
             for idx, track_info in enumerate(tracks):
                 if idx > 0: main_process_context.advance(main_progress_id, 1)
                 main_process_context.update(main_progress_id, description=f"{len(tracks)} songs found in playlist {playlist_id} >>> completed ({idx}/{len(tracks)})")
-                try: song_info = self._parsewithofficialapiv1(track_info, request_overrides=request_overrides, song_info_flac=None, lossless_quality_is_sufficient=True)
+                try: song_info = self._parsewithofficialapiv1(track_info, request_overrides=request_overrides, song_info_flac=None, lossless_quality_is_sufficient=False)
                 except Exception: song_info = SongInfo(source=self.source)
+                if song_info.with_valid_download_url: song_infos.append(song_info)
             main_process_context.advance(main_progress_id, 1)
             main_process_context.update(main_progress_id, description=f"{len(tracks)} songs found in playlist {playlist_id} >>> completed ({idx+1}/{len(tracks)})")
         song_infos = self._removeduplicates(song_infos=song_infos)
