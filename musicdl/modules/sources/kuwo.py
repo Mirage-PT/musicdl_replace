@@ -20,7 +20,7 @@ from ..utils.hosts import KUWO_MUSIC_HOSTS
 from ..utils.kuwoutils import KuwoMusicClientUtils
 from urllib.parse import urlencode, urlparse, parse_qs
 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn, MofNCompleteColumn
-from ..utils import touchdir, optionalimport, legalizestring, resp2json, seconds2hms, usesearchheaderscookies, safeextractfromdict, kuwolyricslisttolrc, useparseheaderscookies, obtainhostname, hostmatchessuffix, cleanlrc, SongInfo
+from ..utils import touchdir, optionalimport, legalizestring, resp2json, seconds2hms, usesearchheaderscookies, safeextractfromdict, useparseheaderscookies, obtainhostname, hostmatchessuffix, cleanlrc, SongInfo
 warnings.filterwarnings('ignore')
 
 
@@ -202,7 +202,7 @@ class KuwoMusicClient(BaseMusicClient):
             except Exception: break
             playlist_results = resp2json(resp=resp)
             if (not safeextractfromdict(playlist_results, ['data', 'musicList'], [])) or (float(safeextractfromdict(playlist_results, ['data', 'total'], 0)) <= len(tracks)): break
-            tracks.extend(safeextractfromdict(playlist_results, ['data', 'musicList'], []))
+            tracks.extend(safeextractfromdict(playlist_results, ['data', 'musicList'], [])); page += 1
         tracks = list({d["musicrid"]: d for d in tracks}.values())
         with Progress(TextColumn("{task.description}"), BarColumn(bar_width=None), MofNCompleteColumn(), TimeRemainingColumn(), refresh_per_second=10) as main_process_context:
             main_progress_id = main_process_context.add_task(f"{len(tracks)} songs found in playlist {playlist_id} >>> completed (0/{len(tracks)})", total=len(tracks))

@@ -258,6 +258,7 @@ class NeteaseMusicClient(BaseMusicClient):
         song_info, request_overrides, song_info_flac, song_id = SongInfo(source=self.source, raw_data={'quality': MUSIC_QUALITIES[-1]}), request_overrides or {}, song_info_flac or SongInfo(source=self.source, raw_data={'quality': MUSIC_QUALITIES[-1]}), search_result['id']
         # parse download results
         for quality_idx, quality in enumerate(MUSIC_QUALITIES):
+            if lossless_quality_is_sufficient and song_info_flac.with_valid_download_url and song_info_flac.ext in ('flac',): song_info = song_info_flac; break
             if song_info_flac.with_valid_download_url and quality_idx >= MUSIC_QUALITIES.index(song_info_flac.raw_data.get('quality', MUSIC_QUALITIES[-1])): song_info = song_info_flac; break
             params = {'ids': [search_result['id']], 'level': quality, 'encodeType': 'flac', 'header': json.dumps({"os": "pc", "appver": "", "osver": "", "deviceId": "pyncm!", "requestId": str(random.randrange(20000000, 30000000))})}
             if quality == 'sky': params['immerseType'] = 'c51'
@@ -335,7 +336,7 @@ class NeteaseMusicClient(BaseMusicClient):
                 # --parse with third part apis
                 song_info_flac = self._parsewiththirdpartapis(search_result=search_result, request_overrides=request_overrides)
                 # --parse with official apis
-                try: song_info = self._parsewithofficialapiv1(search_result=search_result, request_overrides=request_overrides, song_info_flac=song_info_flac, lossless_quality_is_sufficient=True)
+                try: song_info = self._parsewithofficialapiv1(search_result=search_result, request_overrides=request_overrides, song_info_flac=song_info_flac, lossless_quality_is_sufficient=False)
                 except Exception: song_info = SongInfo(source=self.source)
                 # --append to song_infos
                 if not song_info.with_valid_download_url: continue

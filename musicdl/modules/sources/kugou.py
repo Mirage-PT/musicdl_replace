@@ -227,7 +227,7 @@ class KugouMusicClient(BaseMusicClient):
             except Exception: continue
             playlist_results = resp2json(resp=resp)
             if (not safeextractfromdict(playlist_results, ['data', 'info'], [])) or (float(safeextractfromdict(playlist_results, ['data', 'count'], 0)) <= len(tracks)): break
-            tracks.extend(safeextractfromdict(playlist_results, ['data', 'info'], []))
+            tracks.extend(safeextractfromdict(playlist_results, ['data', 'info'], [])); page += 1
         tracks = list({d["hash"]: d for d in tracks}.values())
         with Progress(TextColumn("{task.description}"), BarColumn(bar_width=None), MofNCompleteColumn(), TimeRemainingColumn(), refresh_per_second=10) as main_process_context:
             main_progress_id = main_process_context.add_task(f"{len(tracks)} songs found in playlist {playlist_id} >>> completed (0/{len(tracks)})", total=len(tracks))
