@@ -258,12 +258,22 @@ function App() {
   }, [library?.search_task?.status, library?.download_task?.status])
 
   const handleSelectChoice = async (songId, source, index) => {
+    if (!library) return
     const song = library.songs.find((s) => s.id === songId)
     const isSelected = song?.best_choice && song.best_choice.source === source && song.best_choice.index === index
     try {
       const res = await selectChoice(libraryId, songId, isSelected ? null : source, isSelected ? null : index)
-      await refreshLibrary()
-      if (selectedSong?.id === songId && res.song) setSelectedSong(res.song)
+      if (res?.song) {
+        // 本地立即更新列表与当前选中项，避免等待整库刷新带来的 1～2 秒延迟
+        setLibrary((prev) => {
+          if (!prev) return prev
+          const nextSongs = prev.songs.map((s) => (s.id === res.song.id ? res.song : s))
+          return { ...prev, songs: nextSongs }
+        })
+        setSelectedSong((prev) => (prev?.id === res.song.id ? res.song : prev))
+      }
+      // 后台同步一次完整库状态，确保与后端最终一致
+      refreshLibrary()
     } catch (e) {
       setError(e.message)
     }

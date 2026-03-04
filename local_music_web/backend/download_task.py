@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 import urllib.request
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pathvalidate import sanitize_filename
 
@@ -33,28 +34,42 @@ def _target_path(entry: SongEntry, song_name: str, singers: str, ext: str) -> st
 
 
 def _netease_suffix(url: str) -> str:
-    """Extract stable suffix part from Netease url for matching refreshed links."""
+    """Extract stable suffix part from Netease url for matching refreshed links.
+
+    关键稳定部分其实是 /obj/.../xxx.flac，所以优先从 /obj/ 开始截取；
+    若没有 /obj/ 再回退到 /jdymusic/ 或 /ymusic/。
+    """
     try:
         p = urlparse(str(url))
         path = p.path or ""
-        idx = path.find("/ymusic/")
-        return path[idx:] if idx >= 0 else path
+        # 优先从 /obj/ 开始（最稳定）
+        obj_idx = path.find("/obj/")
+        if obj_idx >= 0:
+            return path[obj_idx:]
+        # 回退到 /jdymusic/ 或 /ymusic/
+        for marker in ("/jdymusic/", "/ymusic/"):
+            idx = path.find(marker)
+            if idx >= 0:
+                return path[idx:]
+        return path
     except Exception:
         return str(url)
 
 
-def _mark_entry_error(library_id: str, entry_id: str, message: str, completed: int) -> None:
-    """在库文件中将指定歌曲标记为 error，并更新已完成数量。"""
-    lib = load_library(library_id)
-    if not lib:
-        return
-    for e in lib.songs:
-        if e.id == entry_id:
-            e.status = "error"
-            e.error_message = message
-            break
-    lib.download_task.completed_count = completed
-    save_library(lib)
+def _mark_entry_error(library_id: str, entry_id: str, message: str) -> None:
+    """在库文件中将指定歌曲标记为 error，并推进已完成计数。"""
+    with _download_lock:
+        lib = load_library(library_id)
+        if not lib:
+            return
+        for e in lib.songs:
+            if e.id == entry_id:
+                e.status = "error"
+                e.error_message = message
+                break
+        lib.download_task.completed_count += 1
+        lib.download_task.current_index = lib.download_task.completed_count
+        save_library(lib)
 
 
 def _run_download_worker(library_id: str) -> None:
@@ -76,15 +91,25 @@ def _run_download_worker(library_id: str) -> None:
             continue
         to_download.append((i, entry))
 
-    completed = 0
-    for idx, entry in to_download:
+    if not to_download:
+        with _download_lock:
+            lib = load_library(library_id)
+            if lib:
+                lib.download_task.status = "idle"
+                lib.download_task.current_song_name = None
+                save_library(lib)
+            _download_library_id = None
+        return
+
+    def _process_one(idx: int, entry: SongEntry) -> None:
+        # 停止 / 暂停控制
         if _download_stop.is_set():
-            break
+            return
         while _download_paused.is_set() and not _download_stop.is_set():
             import time
             time.sleep(0.3)
         if _download_stop.is_set():
-            break
+            return
 
         raw = entry.best_choice.raw or {}
         # 取基础信息
@@ -93,17 +118,18 @@ def _run_download_worker(library_id: str) -> None:
         ext = (str(raw.get("ext") or "mp3")).strip().lstrip(".")
         url = raw.get("download_url") or raw.get("final_url")
         if not url or not str(url).startswith("http"):
-            _mark_entry_error(library_id, entry.id, "download url missing", completed)
-            continue
+            _mark_entry_error(library_id, entry.id, "download url missing")
+            return
 
         target = _target_path(entry, song_name, singers, ext)
         os.makedirs(os.path.dirname(target), exist_ok=True)
 
         # 更新“正在下载”显示
-        lib = load_library(library_id)
-        if lib:
-            lib.download_task.current_song_name = f"{song_name} - {singers}"
-            save_library(lib)
+        with _download_lock:
+            lib_local = load_library(library_id)
+            if lib_local:
+                lib_local.download_task.current_song_name = f"{song_name} - {singers}"
+                save_library(lib_local)
 
         # 实际下载（若失败且为网易云，则尝试自动刷新链接再重试一次）
         def _download_once(d_url: str) -> None:
@@ -136,10 +162,12 @@ def _run_download_worker(library_id: str) -> None:
                     search_results = mc.search(keyword=keyword)
                     cand_list = search_results.get("NeteaseMusicClient") or []
                     refreshed_url = None
+                    candidate_urls: list[str] = []
                     for si in cand_list:
                         new_url = getattr(si, "download_url", None)
                         if not new_url:
                             continue
+                        candidate_urls.append(str(new_url))
                         if _netease_suffix(new_url) == orig_suffix:
                             refreshed_url = new_url
                             break
@@ -148,59 +176,67 @@ def _run_download_worker(library_id: str) -> None:
                             _download_once(refreshed_url)
                             # 成功后，更新 raw 里的 download_url，方便下次直接用新的
                             entry.best_choice.raw["download_url"] = str(refreshed_url)
-                            lib2 = load_library(library_id)
-                            if lib2:
-                                save_library(lib2)
+                            with _download_lock:
+                                lib2 = load_library(library_id)
+                                if lib2:
+                                    save_library(lib2)
                         except Exception as second_err:
                             _mark_entry_error(
                                 library_id,
                                 entry.id,
                                 f"download failed after refresh: {second_err}",
-                                completed,
                             )
-                            continue
+                            return
                     else:
-                        _mark_entry_error(
-                            library_id,
-                            entry.id,
-                            f"download failed and no refreshed Netease link matched suffix {orig_suffix}",
-                            completed,
+                        # 没有找到尾缀匹配的网易云链接，详细记录候选 URL 便于排查
+                        joined = "; ".join(candidate_urls[:5])
+                        more = " (and more)" if len(candidate_urls) > 5 else ""
+                        msg = (
+                            "download failed and no refreshed Netease link matched suffix "
+                            f"{orig_suffix}; original={url}; candidates={joined}{more}"
                         )
-                        continue
+                        _mark_entry_error(library_id, entry.id, msg)
+                        return
                 except Exception as refresh_err:
                     _mark_entry_error(
                         library_id,
                         entry.id,
                         f"download failed and refresh error: {refresh_err}",
-                        completed,
                     )
-                    continue
+                    return
             else:
-                _mark_entry_error(library_id, entry.id, f"download failed: {first_err}", completed)
-                continue
+                _mark_entry_error(library_id, entry.id, f"download failed: {first_err}")
+                return
 
         if not os.path.exists(target):
-            _mark_entry_error(library_id, entry.id, "download did not produce file", completed)
-            continue
+            _mark_entry_error(library_id, entry.id, "download did not produce file")
+            return
 
-        # Update entry
-        lib = load_library(library_id)
-        if not lib:
-            break
-        for e in lib.songs:
-            if e.id == entry.id:
-                e.file_path = target
-                e.file_name = os.path.basename(target)
-                e.song_name = song_name
-                e.singers = singers
-                e.status = "downloaded"
-                e.downloaded_at = datetime.utcnow().isoformat() + "Z"
-                e.error_message = None
+        # Update entry & progress
+        with _download_lock:
+            lib_local = load_library(library_id)
+            if not lib_local:
+                return
+            for e in lib_local.songs:
+                if e.id == entry.id:
+                    e.file_path = target
+                    e.file_name = os.path.basename(target)
+                    e.song_name = song_name
+                    e.singers = singers
+                    e.status = "downloaded"
+                    e.downloaded_at = datetime.utcnow().isoformat() + "Z"
+                    e.error_message = None
+                    break
+            lib_local.download_task.completed_count += 1
+            lib_local.download_task.current_index = lib_local.download_task.completed_count
+            save_library(lib_local)
+
+    max_workers = min(3, len(to_download))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_process_one, idx, entry) for idx, entry in to_download]
+        for _ in as_completed(futures):
+            if _download_stop.is_set():
                 break
-        completed += 1
-        lib.download_task.completed_count = completed
-        lib.download_task.current_index = completed
-        save_library(lib)
 
     lib = load_library(library_id)
     if lib:
