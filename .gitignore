@@ -103,4 +103,9 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# local_music_web runtime
+local_music_web/logs/
+local_music_web/.backend.pid
+local_music_web/.frontend.pid
+
 

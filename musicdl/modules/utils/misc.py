@@ -21,6 +21,7 @@ import json_repair
 import unicodedata
 from io import BytesIO
 from pathlib import Path
+from typing import Union, Optional
 from bs4 import BeautifulSoup
 from .importutils import optionalimport
 from mutagen import File as MutagenFile
@@ -54,7 +55,7 @@ def estimatedurationwithfilelink(filelink: str = '', headers: dict = None, reque
 
 
 '''cookies2dict'''
-def cookies2dict(cookies: str | dict = None):
+def cookies2dict(cookies: Optional[Union[str, dict]] = None):
     if not cookies: cookies = {}
     if isinstance(cookies, dict): return cookies
     if isinstance(cookies, str): return dict(item.split("=", 1) for item in cookies.split("; "))
@@ -62,7 +63,7 @@ def cookies2dict(cookies: str | dict = None):
 
 
 '''cookies2string'''
-def cookies2string(cookies: str | dict = None):
+def cookies2string(cookies: Optional[Union[str, dict]] = None):
     if not cookies: cookies = ""
     if isinstance(cookies, str): return cookies
     if isinstance(cookies, dict): return "; ".join(f"{k}={v}" for k, v in cookies.items())
@@ -179,7 +180,7 @@ def resp2json(resp: requests.Response):
 
 
 '''isvalidresp'''
-def isvalidresp(resp: requests.Response, valid_status_codes: list | tuple | set = {200, 206}):
+def isvalidresp(resp: requests.Response, valid_status_codes: Union[list, tuple, set] = (200, 206)):
     curl_cffi = optionalimport('curl_cffi')
     valid_resp_object = (requests.Response, curl_cffi.requests.Response) if curl_cffi else requests.Response
     if not isinstance(resp, valid_resp_object): return False
